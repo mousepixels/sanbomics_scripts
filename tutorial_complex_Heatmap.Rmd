@@ -1,0 +1,255 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("DESeq2")
+```
+
+```{r}
+library(DESeq2)
+library(ggplot2)
+```
+
+```{bash}
+ls
+```
+
+
+```{r}
+Counts <- read.delim("count_table.csv", header = TRUE, row.names = 1, sep = ",")
+```
+
+```{r}
+Counts
+```
+
+```{r}
+Counts <- Counts[which(rowSums(Counts) > 0),]
+```
+
+
+```{r}
+Counts
+```
+
+```{r}
+condition <- factor(c("C","C","C","C", "S","S","S","S"))
+```
+
+```{r}
+coldata <- data.frame(row.names = colnames(Counts), condition)
+```
+
+```{r}
+coldata
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = Counts, colData = coldata, design = ~condition)
+```
+
+```{r}
+dds <- DESeq(dds)
+```
+
+```{r}
+vsdata <- vst(dds, blind=FALSE)
+```
+
+```{r}
+plotPCA(vsdata, intgroup = "condition")
+```
+
+```{r}
+plotDispEsts(dds)
+```
+
+```{r}
+res <- results(dds, contrast = c("condition", "S", "C"))
+```
+
+```{r}
+res
+```
+
+
+```{r}
+sigs <- na.omit(res)
+```
+
+```{r}
+sigs <- sigs[sigs$padj < 0.05,]
+```
+
+```{r}
+sigs
+```
+
+```{r}
+write.csv(sigs, file = "deseq_results.csv")
+```
+
+
+```{bash}
+ls
+```
+
+```{r}
+sigs
+```
+
+```{r}
+df <- as.data.frame(sigs)
+df
+```
+
+
+
+```{r}
+ensembl_map <- read.csv('ensemble_key_mapper.csv', header = FALSE)
+
+
+keys <- ensembl_map$V1
+values <- ensembl_map$V2
+
+l <- list()
+for (i in 1:length(keys)){
+  l[keys[i]] <- values[i]
+}
+
+
+```
+
+
+
+
+
+```{r}
+#for non-mapped labels
+no_values <- setdiff(rownames(df), keys)
+for (i in 1:length(no_values)){
+  l[no_values[i]] <- 'NA'
+}
+```
+
+
+```{r}
+df$symbol <- unlist(l[rownames(df)], use.names = FALSE)
+```
+
+
+
+```{r}
+df.top <- df[ (df$baseMean > 50) & (abs(df$log2FoldChange) > 2),]
+df.top
+```
+
+```{r}
+df.top <- df.top[order(df.top$log2FoldChange, decreasing = TRUE),]
+```
+
+
+```{r}
+rlog_out <- rlog(dds, blind=FALSE) #get normalized count data from dds object
+mat<-assay(rlog_out)[rownames(df.top), rownames(coldata)] #sig genes x samples
+colnames(mat) <- rownames(coldata)
+base_mean <- rowMeans(mat)
+mat.scaled <- t(apply(mat, 1, scale)) #center and scale each column (Z-score) then transpose
+colnames(mat.scaled)<-colnames(mat)
+```
+
+
+```{r}
+num_keep <- 25
+#1 to num_keep len-num_keep to len
+rows_keep <- c(seq(1:num_keep), seq((nrow(mat.scaled)-num_keep), nrow(mat.scaled)) )
+```
+
+
+
+```{r}
+l2_val <- as.matrix(df.top[rows_keep,]$log2FoldChange) #getting log2 value for each gene we are keeping
+colnames(l2_val)<-"logFC"
+
+mean <- as.matrix(df.top[rows_keep,]$baseMean) #getting mean value for each gene we are keeping
+colnames(mean)<-"AveExpr"
+```
+
+
+
+
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("ComplexHeatmap")
+```
+
+
+
+```{r}
+library(ComplexHeatmap)
+library(RColorBrewer)
+library(circlize)
+```
+
+
+
+```{r}
+#maps values between b/w/r for min and max l2 values
+col_logFC <- colorRamp2(c(min(l2_val),0, max(l2_val)), c("blue", "white", "red")) 
+
+#maps between 0% quantile, and 75% quantile of mean values --- 0, 25, 50, 75, 100
+col_AveExpr <- colorRamp2(c(quantile(mean)[1], quantile(mean)[4]), c("white", "red"))
+```
+
+
+
+```{r}
+
+ha <- HeatmapAnnotation(summary = anno_summary(gp = gpar(fill = 2), 
+                                               height = unit(2, "cm")))
+
+h1 <- Heatmap(mat.scaled[rows_keep,], cluster_rows = F, 
+            column_labels = colnames(mat.scaled), name="Z-score",
+            cluster_columns = T)
+h2 <- Heatmap(l2_val, row_labels = df.top$symbol[rows_keep], 
+            cluster_rows = F, name="logFC", top_annotation = ha, col = col_logFC,
+            cell_fun = function(j, i, x, y, w, h, col) { # add text to each grid
+              grid.text(round(l2_val[i, j],2), x, y)
+            })
+h3 <- Heatmap(mean, row_labels = df.top$symbol[rows_keep], 
+            cluster_rows = F, name = "AveExpr", col=col_AveExpr,
+            cell_fun = function(j, i, x, y, w, h, col) { # add text to each grid
+              grid.text(round(mean[i, j],2), x, y)
+            })
+
+h<-h1+h2+h3
+h
+```
+
+
+```{r}
+png("./heatmap_v1.png", res = 300, width = 3000, height = 5500)
+print(h)
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
