@@ -1,0 +1,139 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("AUCell")
+```
+
+```{r}
+library(AUCell)
+library(Seurat)
+```
+
+```{r}
+load("droplet_Lung_seurat_tiss.Robj")
+tiss <- UpdateSeuratObject(object = tiss)
+```
+
+```{r}
+tiss[[]]
+```
+
+```{r}
+DimPlot(object = tiss, group.by = "cell_ontology_class", label = TRUE)
+```
+
+```{r}
+markers <- read.csv("PanglaoDB_markers_27_Mar_2020.tsv", sep = "\t")
+markers <- markers[markers$cell.type == "Endothelial cells" & markers$species != "Hs",]
+markers
+```
+```{r}
+genes <- markers$official.gene.symbol
+
+mousify <- function(a){
+  return(paste0(substr(a,1,1), tolower(substr(a,2,nchar(a)))))
+  
+}
+genes <- sapply(genes, mousify)
+genes
+```
+
+```{r}
+counts <- GetAssayData(object = tiss, slot = "counts")
+```
+
+```{r}
+cell_rankings <- AUCell_buildRankings(counts)
+```
+
+```{r}
+cells_AUC <- AUCell_calcAUC(genes, cell_rankings)
+```
+
+
+```{r}
+cells_assignment <- AUCell_exploreThresholds(cells_AUC, plotHist = TRUE, assign=TRUE)
+```
+
+```{r}
+cells_assignment$geneSet$assignment
+```
+
+
+```{r}
+new_cells <- names(which(getAUC(cells_AUC)["geneSet",]>0.15))
+```
+
+```{r}
+tiss$is_ec <- ifelse(colnames(tiss) %in% new_cells, "EC", "non_EC")
+```
+
+```{r}
+tiss[[]]
+```
+
+```{r}
+DimPlot(object = tiss, group.by = "is_ec", label = TRUE)
+```
+
+```{r}
+DimPlot(object = tiss, group.by = "cell_ontology_class", label = TRUE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
