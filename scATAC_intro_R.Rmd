@@ -3,16 +3,415 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
 
 ```{r}
-plot(cars)
+install.packages('hdf5r') #need to read h5 files
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+```{r}
+install.packages("Signac") #seurat addon for analyzing chromatin
+```
 
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+```{r}
+install.packages('Seurat')
+```
+
+
+```{r}
+library(Signac)
+library(Seurat)
+```
+
+
+```{r}
+counts <- Read10X_h5(filename = "GSM5723631_Young_HSC_filtered_peak_bc_matrix.h5")
+```
+
+```{r}
+meta <- read.csv(
+file = 'GSM5723631_Young_HSC_singlecell.csv.gz',
+header = TRUE,
+row.names = 1)
+```
+
+
+```{r}
+  chrom_assay <- CreateChromatinAssay(
+  counts = counts,
+  sep = c(":", "-"),
+  genome = 'mm10',
+  fragments = './GSM5723631_Young_HSC_fragments.tsv.gz',
+  min.cells = 10,
+  min.features = 200
+)
+```
+
+
+```{r}
+data <- CreateSeuratObject(
+  counts = chrom_assay,
+  assay = "peaks",
+  meta.data = meta
+)
+```
+
+
+```{r}
+data[[]]
+```
+
+EnsDb.Hsapiens.v86 for human
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("EnsDb.Mmusculus.v79")
+BiocManager::install("GenomeInfoDb") #translation between chromosome names
+BiocManager::install("biovizBase")
+```
+
+```{r}
+library(GenomeInfoDb)
+library(EnsDb.Mmusculus.v79)
+```
+
+
+```{r}
+annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Mmusculus.v79)
+seqlevelsStyle(annotations) <- 'UCSC'
+```
+
+
+
+```{r}
+Annotation(data) <- annotations
+```
+
+
+```{r}
+data <- NucleosomeSignal(object = data) #fragment ratio 147-294: <147
+```
+
+```{r}
+data <- TSSEnrichment(object = data, fast = FALSE)
+```
+
+```{r}
+data$blacklist_ratio <- data$blacklist_region_fragments / data$peak_region_fragments
+
+#data[[]]
+```
+
+
+```{r}
+data$pct_reads_in_peaks <- data$peak_region_fragments / data$passed_filters * 100 
+```
+
+
+```{r}
+VlnPlot(
+  object = data,
+  features = c('peak_region_fragments', 'pct_reads_in_peaks', 
+                'blacklist_ratio', 'nucleosome_signal', 'TSS.enrichment'),
+  pt.size = 0.1,
+  ncol = 5
+)
+```
+
+
+
+could do this....
+```{r}
+data <- subset(
+  x = data,
+  subset = peak_region_fragments > 3000 &
+    peak_region_fragments < 20000 &
+    pct_reads_in_peaks > 15 &
+    blacklist_ratio < 0.05 &
+    nucleosome_signal < 4 &
+    TSS.enrichment > 2
+)
+```
+
+
+
+```{r}
+low_prf <- quantile(data[["peak_region_fragments"]]$peak_region_fragments, probs = 0.02)
+hig_prf <- quantile(data[["peak_region_fragments"]]$peak_region_fragments, probs = 0.98)
+low_prp <- quantile(data[["pct_reads_in_peaks"]]$pct_reads_in_peaks, probs = 0.02)
+
+high_blr <- quantile(data[["blacklist_ratio"]]$blacklist_ratio, probs = 0.98)
+
+hig_ns <- quantile(data[["nucleosome_signal"]]$nucleosome_signal, probs = 0.98)
+
+low_ts <- quantile(data[["TSS.enrichment"]]$TSS.enrichment, probs = 0.02)
+```
+
+```{r}
+print(low_prf)
+print(hig_prf)
+print(low_prp)
+print(high_blr)
+print(hig_ns)
+print(low_ts)
+```
+
+```{r}
+data <- subset(
+  x = data,
+  subset = peak_region_fragments > low_prf &
+    peak_region_fragments < hig_prf &
+    pct_reads_in_peaks > low_prp &
+    blacklist_ratio < high_blr &
+    nucleosome_signal < hig_ns &
+    TSS.enrichment > low_ts
+)
+```
+
+
+
+
+
+```{r}
+data
+```
+
+
+Normalization, dimension reduction
+
+```{r}
+data <- RunTFIDF(data)
+```
+
+```{r}
+data <- FindTopFeatures(data, min.cutoff = 'q0')
+data
+```
+
+
+```{r}
+data <- RunSVD(data)
+```
+
+```{r}
+DepthCor(data)
+```
+
+```{r}
+data <- RunUMAP(object = data, reduction = 'lsi', dims = 2:30)
+data <- FindNeighbors(object = data, reduction = 'lsi', dims = 2:30)
+data <- FindClusters(object = data, verbose = FALSE, algorithm = 3)
+DimPlot(object = data, label = TRUE) + NoLegend()
+```
+
+
+Multiple samples....
+
+```{r}
+import_atac <- function(count_path, meta_path, fragment_path){
+  counts <- Read10X_h5(filename = count_path)
+  
+  meta <- read.csv(
+  file = meta_path,
+  header = TRUE,
+  row.names = 1)
+  
+  
+  
+    chrom_assay <- CreateChromatinAssay(
+    counts = counts,
+    sep = c(":", "-"),
+    genome = 'mm10',
+    fragments = fragment_path,
+    min.cells = 10,
+    min.features = 200
+  )
+  
+  data <- CreateSeuratObject(
+    counts = chrom_assay,
+    assay = "peaks",
+    meta.data = meta
+  )
+  
+  Annotation(data) <- annotations
+  
+  
+  data <- NucleosomeSignal(object = data) #fragment ratio 147-294: <147  ---  mononucleosome:nucleosome-free
+  
+  
+  data <- TSSEnrichment(object = data, fast = FALSE)
+  
+  data$blacklist_ratio <- data$blacklist_region_fragments / data$peak_region_fragments
+  
+  data$pct_reads_in_peaks <- data$peak_region_fragments / data$passed_filters * 100 
+  
+  low_prf <- quantile(data[["peak_region_fragments"]]$peak_region_fragments, probs = 0.02)
+  hig_prf <- quantile(data[["peak_region_fragments"]]$peak_region_fragments, probs = 0.98)
+  low_prp <- quantile(data[["pct_reads_in_peaks"]]$pct_reads_in_peaks, probs = 0.02)
+  
+  high_blr <- quantile(data[["blacklist_ratio"]]$blacklist_ratio, probs = 0.98)
+  
+  hig_ns <- quantile(data[["nucleosome_signal"]]$nucleosome_signal, probs = 0.98)
+  
+  low_ts <- quantile(data[["TSS.enrichment"]]$TSS.enrichment, probs = 0.02)
+  
+  data <- subset(
+    x = data,
+    subset = peak_region_fragments > low_prf &
+      peak_region_fragments < hig_prf &
+      pct_reads_in_peaks > low_prp &
+      blacklist_ratio < high_blr &
+      nucleosome_signal < hig_ns &
+      TSS.enrichment > low_ts
+  )
+  
+  
+  
+  #data <- RunTFIDF(data)
+  #data <- FindTopFeatures(data, min.cutoff = 'q0')
+  #data <- RunSVD(data)
+
+  return(data)
+}
+```
+
+
+```{r}
+young <- import_atac("GSM5723631_Young_HSC_filtered_peak_bc_matrix.h5",
+         'GSM5723631_Young_HSC_singlecell.csv.gz',
+         './GSM5723631_Young_HSC_fragments.tsv.gz')
+
+old <- import_atac("GSM5723632_Aged_HSC_filtered_peak_bc_matrix.h5",
+         'GSM5723632_Aged_HSC_singlecell.csv.gz',
+         './GSM5723632_Aged_HSC_fragments.tsv.gz')
+```
+
+```{r}
+young$dataset <- "young"
+old$dataset <- "old"
+```
+
+
+```{r}
+data <- merge(young, old)
+```
+
+
+```{r}
+data
+```
+
+
+```{r}
+data <- FindTopFeatures(data, min.cutoff = 'q0')
+data <- RunTFIDF(data)
+data <- RunSVD(data)
+data
+```
+
+
+```{r}
+data <- RunUMAP(object = data, reduction = 'lsi', dims = 2:30)
+data <- FindNeighbors(object = data, reduction = 'lsi', dims = 2:30)
+```
+
+```{r}
+data <- FindClusters(object = data, verbose = FALSE, algorithm = 3, resolution = .4)
+```
+
+```{r}
+DimPlot(object = data, label = TRUE) + NoLegend()
+```
+
+```{r}
+DimPlot(object = data, label = TRUE, group.by = "dataset") + NoLegend()
+```
+
+Data analysis
+
+```{r}
+gene.activities <- GeneActivity(data)
+```
+
+```{r}
+data[['RNA']] <- CreateAssayObject(counts = gene.activities)
+
+data <- NormalizeData(
+  object = data,
+  assay = 'RNA',
+  normalization.method = 'LogNormalize',
+  scale.factor = median(data$nCount_RNA)
+)
+```
+
+```{r}
+data[['RNA']]
+```
+
+
+```{r}
+DefaultAssay(data) <- 'RNA'
+
+
+FeaturePlot(
+  object = data,
+  features = c('Kit', 'Pecam1', 'Itgam'),
+  max.cutoff = 'q95'
+)
+```
+
+
+```{r}
+DefaultAssay(data) <- 'peaks'
+
+da_peaks <- FindMarkers(
+  object = data,
+  ident.1 = rownames(data[[]][data$dataset == "old",]),
+  ident.2 = rownames(data[[]][data$dataset == "young",]),
+  min.pct = 0.05,
+  test.use = 'LR',
+  latent.vars = 'peak_region_fragments'
+)
+
+
+```
+
+
+```{r}
+da_peaks
+```
+
+```{r}
+da_peaks$closest_gene <-ClosestFeature(data, regions = rownames(da_peaks))$gene_name
+da_peaks$distance <- ClosestFeature(data, regions = rownames(da_peaks))$distance
+da_peaks
+```
+
+```{r}
+CoveragePlot(
+  object = data,
+  region = rownames(da_peaks)[2],
+  extend.upstream = 10000,
+  extend.downstream = 5000,
+  group.by = "dataset"
+)
+```
+
+```{r}
+plot1 <- VlnPlot(
+  object = data,
+  features = rownames(da_peaks)[2],
+  group.by = "dataset"
+)
+plot2 <- FeaturePlot(
+  object = data,
+  features = rownames(da_peaks)[2],
+  max.cutoff = 'q95'
+)
+
+plot1 | plot2
+```
+
+
+
