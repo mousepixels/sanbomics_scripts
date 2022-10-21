@@ -1,0 +1,83 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(DESeq2)
+Counts <- read.delim("../count_table.csv", header = TRUE, row.names = 1, sep = ",")
+Counts <- Counts[which(rowSums(Counts) > 0),]
+condition <- factor(c("C","C","C","C", "S","S","S","S"))
+coldata <- data.frame(row.names = colnames(Counts), condition)
+dds <- DESeqDataSetFromMatrix(countData = Counts, colData = coldata, design = ~condition)
+dds <- DESeq(dds)
+res <- results(dds, contrast = c("condition", "S", "C"))
+sigs <- na.omit(res)
+sigs <- sigs[sigs$padj < 0.05 & sigs$baseMean > 50,]
+```
+
+```{r}
+sigs
+```
+
+
+
+
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("clusterProfiler")
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("AnnotationDbi")
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("org.Hs.eg.db")
+```
+
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+```
+
+```{r}
+genes_to_test <- rownames(sigs[sigs$log2FoldChange > 0.5,])
+```
+
+```{r}
+GO_results <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "ENSEMBL", ont = "BP")
+```
+
+```{r}
+as.data.frame(GO_results)
+```
+
+```{r}
+fit <- plot(barplot(GO_results, showCategory = 15))
+
+png("out.png", res = 250, width = 1400, height = 1800)
+print(fit)
+dev.off()
+
+fit
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+
+
+
+
