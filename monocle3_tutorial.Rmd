@@ -1,0 +1,271 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+BiocManager::install(c('BiocGenerics', 'DelayedArray', 'DelayedMatrixStats',
+                       'limma', 'lme4', 'S4Vectors', 'SingleCellExperiment',
+                       'SummarizedExperiment', 'batchelor', 'HDF5Array',
+                       'terra', 'ggrastr'))
+```
+
+```{r}
+devtools::install_github('cole-trapnell-lab/monocle3')
+```
+
+```{r}
+install.packages('Seurat')
+```
+
+```{r}
+devtools::install_github("satijalab/seurat-wrappers")
+```
+
+
+
+```{r}
+library(monocle3)
+library(Seurat)
+```
+
+
+```{r}
+files <- list.files('data')
+files <- grep("2i|Dox", files, value = TRUE)
+files <- grep("h5", files, value = TRUE)
+files
+```
+
+
+
+```{r}
+input_files <- function(h5_path){
+  day <- sub("^.*_D([^_]*)_Dox.*$", "\\1", h5_path)
+  day <- sub("^.*_D([^_]*)_2i.*$", "\\1", day)
+  
+  data <- Read10X_h5(paste0('data/', h5_path))
+  data <- CreateSeuratObject(data, min.cells = 0, min.features = 200)
+  data[["percent.mt"]] <- PercentageFeatureSet(data, pattern = "mt-")
+  lb <- quantile(data[["nFeature_RNA"]]$nFeature_RNA, probs = 0.02)
+  ub <- quantile(data[["nFeature_RNA"]]$nFeature_RNA, probs = 0.97)
+  data <- data[, data[["nFeature_RNA"]] > lb & data[["nFeature_RNA"]] < ub & data[["percent.mt"]] < 15]
+  
+  data$day <- day
+  return(data)
+}
+```
+
+
+```{r}
+data_list <- sapply(files, input_files)
+```
+
+
+#### This is where you would integrate if you wanted to do so ####
+#### Example at the bottom of the notebook ######
+
+
+```{r}
+data <- merge(data_list[1]$GSM3195648_D0_Dox_C1_gene_bc_mat.h5, y = data_list[2:length(data_list)])
+```
+
+
+```{r}
+data
+```
+
+
+```{r}
+data <- NormalizeData(object = data, verbose = FALSE)
+data <- FindVariableFeatures(object = data, nfeatures = 2000, verbose = FALSE, selection.method = 'vst')
+data <- ScaleData(data, verbose = FALSE)
+data <- RunPCA(data, npcs = 30, verbose = FALSE)
+data <- FindNeighbors(data, dims = 1:30)
+
+data <- RunUMAP(data, reduction = "pca", dims = 1:30)
+
+
+data@active.assay = 'RNA'
+```
+
+
+
+```{r}
+DimPlot(data, group.by = c("day"))
+```
+
+
+```{r}
+data$dayint <- data[[]]$day
+data$dayint <- ifelse(data$dayint == "iPSC", 20, data$dayint)
+data$dayint <- as.numeric(data$dayint)
+```
+
+
+
+```{r}
+FeaturePlot(data, "dayint")
+```
+
+
+```{r}
+cds <- SeuratWrappers::as.cell_data_set(data) #change to cds here
+```
+
+
+```{r}
+cds <- cluster_cells(cds)
+```
+
+
+```{r}
+plot_cells(cds, show_trajectory_graph = FALSE,
+           color_cells_by = "partition")
+```
+
+
+
+```{r}
+cds <- learn_graph(cds, use_partition = FALSE) #graph learned across all partitions
+```
+
+
+```{r}
+cds <- order_cells(cds)
+```
+
+
+
+```{r}
+plot_cells(cds, color_cells_by = "pseudotime", label_branch_points=FALSE, label_leaves=FALSE)
+```
+
+
+```{r}
+rowData(cds)$gene_name <- rownames(cds)
+rowData(cds)$gene_short_name <- rowData(cds)$gene_name
+```
+
+
+
+```{r}
+plot_cells(cds,
+           genes=c('Sox2', 'Nanog', 'Col6a2'),
+           label_cell_groups=FALSE,
+           show_trajectory_graph=FALSE, 
+           min_expr = 3)
+```
+
+
+```{r}
+cds_pt_res <- graph_test(cds, neighbor_graph="principal_graph", cores=8)
+```
+
+
+```{r}
+cds_pt_res <- readRDS("cds_pt_res.rds")
+```
+
+```{r}
+cds_pt_res
+```
+
+```{r}
+cds_pt_res <- na.omit(cds_pt_res)
+cds_pt_res <- cds_pt_res[cds_pt_res$p_value < 0.05 & cds_pt_res$status == "OK", ]
+cds_pt_res
+```
+
+
+```{r}
+cds_pt_res[order(-cds_pt_res$morans_test_statistic),] 
+```
+
+
+```{r}
+plot_cells(cds, genes=c("Col1a2", "Uba52", "Serpine1", "Dppa5a"),
+           show_trajectory_graph=FALSE,
+           label_cell_groups=FALSE,
+           label_leaves=FALSE)
+```
+
+
+
+```{r}
+cds_subset <- choose_cells(cds)
+```
+
+
+
+```{r}
+cds_subset
+```
+
+
+```{r}
+cds_subset_pt_res <- graph_test(cds_subset, neighbor_graph="principal_graph", cores=8)
+cds_subset_pt_res <- na.omit(cds_subset_pt_res)
+cds_subset_pt_res <- cds_subset_pt_res[cds_subset_pt_res$p_value < 0.05 & cds_subset_pt_res$status == "OK", ]
+cds_subset_pt_res
+```
+
+
+
+
+```{r}
+cds_subset_pt_res[order(-cds_subset_pt_res$morans_test_statistic),] 
+```
+
+
+```{r}
+plot_cells(cds_subset, genes=c("Rpl7a", "Eef1a1", "Mgst1", "Lgals1"),
+           show_trajectory_graph=FALSE,
+           label_cell_groups=FALSE,
+           label_leaves=FALSE)
+```
+
+
+
+```{r}
+cds_subset_subset <- cds_subset[rowData(cds_subset)$gene_short_name %in% c("Rpl7a", "Eef1a1", "Mgst1", "Lgals1")]
+```
+
+```{r}
+plot_genes_in_pseudotime(cds_subset_subset,
+                         color_cells_by="dayint",
+                         min_expr=0.5)
+```
+
+
+
+################################ Integration Example ######################
+
+```{r}
+features <- SelectIntegrationFeatures(object.list = data_list)
+```
+
+```{r}
+
+scale_pca <- function(x){
+  x <- ScaleData(x, features = features, verbose = FALSE)
+  x <- RunPCA(x, features = features, verbose = FALSE)
+  return(x)
+}
+
+
+data_list <- lapply(X = data_list, scale_pca)
+```
+
+
+```{r}
+anchors <- FindIntegrationAnchors(object.list = data_list, anchor.features = features, reduction = "rpca")
+saveRDS(anchors, file = "integration_anchors.rds")
+
+
+data <- IntegrateData(anchorset = anchors)
+
+```
+
+
