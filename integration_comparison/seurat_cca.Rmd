@@ -1,0 +1,278 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(Seurat)
+```
+
+
+```{r}
+files <- list.files('dedif_data/')
+files <- grep("2i|Dox", files, value = TRUE)
+files <- grep("h5", files, value = TRUE)
+files <- grep("C1_", files, value = TRUE)
+files
+```
+
+
+########################## CCA ######################################
+
+dedif
+
+```{r}
+prep_integration <- function(h5_path){
+  #print(h5_path)
+  day <- sub("^.*_D([^_]*)_Dox.*$", "\\1", h5_path)
+  day <- sub("^.*_D([^_]*)_2i.*$", "\\1", day)
+  print(day)
+  
+  data <- Read10X_h5(paste0('dedif_data/', h5_path))
+
+  data <- CreateSeuratObject(data, min.cells = 0, min.features = 300)
+
+  ub <- quantile(data[["nFeature_RNA"]]$nFeature_RNA, probs = 0.97)
+  data <- data[, data[["nFeature_RNA"]] < ub]
+  data <- NormalizeData(object = data, verbose = FALSE)
+  
+  data <- FindVariableFeatures(object = data, nfeatures = 2000, verbose = FALSE, selection.method = 'vst')
+  
+  
+  data$day <- day
+  return(data)
+}
+
+```
+
+
+
+```{r}
+data_list <- sapply(files, prep_integration)
+```
+
+```{r}
+features <- SelectIntegrationFeatures(object.list = data_list)
+```
+
+
+```{r}
+start <- Sys.time()
+anchors <- FindIntegrationAnchors(object.list = data_list, anchor.features = features, reduction = "cca")
+
+
+data <- IntegrateData(anchorset = anchors)
+
+print( Sys.time() - start )
+```
+
+
+
+FAILED, out of memory
+
+
+
+
+CD16 removed
+
+```{r}
+files <- list.files('pbmc_cd16/')
+files <- grep("MH|new", files, value = TRUE)
+files
+```
+
+
+
+```{r}
+prep_integration <- function(h5_path){
+
+  data <-CreateSeuratObject(counts = Read10X(paste0('pbmc_cd16/', h5_path)), min.cells = 0, min.features = 300)
+   
+
+  ub <- quantile(data[["nFeature_RNA"]]$nFeature_RNA, probs = 0.97)
+  data <- data[, data[["nFeature_RNA"]] < ub]
+  data <- NormalizeData(object = data, verbose = FALSE)
+  
+  data <- FindVariableFeatures(object = data, nfeatures = 2000, verbose = FALSE, selection.method = 'vst')
+  
+  
+  data$Sample <- h5_path
+  return(data)
+}
+
+```
+
+
+```{r}
+data_list <- sapply(files, prep_integration)
+```
+
+
+
+```{r}
+features <- SelectIntegrationFeatures(object.list = data_list)
+```
+
+
+```{r}
+start <- Sys.time()
+anchors <- FindIntegrationAnchors(object.list = data_list, anchor.features = features, reduction = "cca")
+
+
+data <- IntegrateData(anchorset = anchors)
+
+print( Sys.time() - start )
+```
+
+
+1.3 hours
+
+
+
+```{r}
+data <- ScaleData(data, verbose = FALSE)
+data <- RunPCA(data, npcs = 40, verbose = FALSE)
+data <- RunUMAP(data, reduction = "pca", dims = 1:40)
+data <- FindNeighbors(data, reduction = "pca", dims = 1:40)
+data <- FindClusters(data, resolution = 0.5)
+
+```
+
+
+```{r}
+data
+```
+
+
+```{r}
+df <- read.csv('pbmc_cd16/cell_types.csv')
+df
+```
+
+
+```{r}
+data$cell_types <- df$initial_clustering[match(rownames(data[[]]), df$covid_index)]
+```
+
+
+```{r}
+DimPlot(data, group.by = 'cell_types')
+```
+
+
+```{r}
+DimPlot(data[,data$cell_types == "CD16" | data$cell_types == "CD14"], group.by = 'cell_types')
+```
+
+
+
+
+
+Two datasets
+
+
+
+```{r}
+prep_integration <- function(h5_path){
+
+  data <-CreateSeuratObject(counts = Read10X(paste0('two_different/', h5_path)), min.cells = 0, min.features = 300)
+  
+   data$Sample <- h5_path
+
+  if (h5_path == 'lung'){
+    data$cell_type = 'lung_na'
+  }
+  else{
+    df <- read.csv('two_different/muscle_meta.csv')
+    data$cell_type <- df$cell_type
+  }
+  
+  ub <- quantile(data[["nFeature_RNA"]]$nFeature_RNA, probs = 0.97)
+  data <- data[, data[["nFeature_RNA"]] < ub]
+  data <- NormalizeData(object = data, verbose = FALSE)
+  
+  data <- FindVariableFeatures(object = data, nfeatures = 2000, verbose = FALSE, selection.method = 'vst')
+  
+  
+  
+  return(data)
+}
+
+```
+
+
+```{r}
+data_list <- c(prep_integration('lung'), prep_integration('muscle'))
+```
+
+
+
+```{r}
+features <- SelectIntegrationFeatures(object.list = data_list)
+```
+
+
+```{r}
+start <- Sys.time()
+anchors <- FindIntegrationAnchors(object.list = data_list, anchor.features = features, reduction = "cca")
+
+
+data <- IntegrateData(anchorset = anchors)
+
+print( Sys.time() - start )
+```
+
+3.075165 mins
+
+
+```{r}
+data <- ScaleData(data, verbose = FALSE)
+data <- RunPCA(data, npcs = 40, verbose = FALSE)
+data <- RunUMAP(data, reduction = "pca", dims = 1:40)
+data <- FindNeighbors(data, reduction = "pca", dims = 1:40)
+data <- FindClusters(data, resolution = 0.5)
+
+```
+
+
+
+```{r}
+DimPlot(data, group.by = 'cell_type')
+```
+
+```{r}
+DimPlot(data[, data$cell_type == 'lung_na' | data$cell_type == 'Macrophage'], group.by = 'cell_type')
+```
+
+```{r}
+DimPlot(data[, data$cell_type == 'lung_na' | data$cell_type == 'Endothelial'], group.by = 'cell_type')
+```
+
+
+```{r}
+DimPlot(data[, data$cell_type == 'lung_na' | data$cell_type == 'SkMus_1'], group.by = 'cell_type')
+```
+
+
+
+
+
+
+
+```{r}
+FeaturePlot(data, c("Cdh5"), max.cutoff = 2)
+```
+
+
+```{r}
+FeaturePlot(data, c("Ptprc"), max.cutoff = 2)
+```
+
+
+
+
+
+
+
+
+
