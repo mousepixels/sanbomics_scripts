@@ -1,0 +1,115 @@
+---
+title: "soupX tutorial"
+output: html_notebook
+---
+
+
+install.packages('SoupX')
+
+```{r}
+library(Seurat)
+library(SoupX)
+```
+
+
+```{r}
+
+mad_outlier <- function(sobj, metric, nmads){
+  M <- sobj@meta.data[[metric]]
+  median_M <- median(M, na.rm = TRUE)
+  mad_M <- mad(M, na.rm = TRUE)
+  outlier <- (M < (median_M - nmads * mad_M)) | (M > (median_M + nmads * mad_M))
+  return(outlier)
+}
+
+pp <- function(sample_id){
+  path <- paste0(sample_id, "/outs/filtered_feature_bc_matrix/")
+  sobj <- Read10X(data.dir = path)
+  sobj <- CreateSeuratObject(counts = sobj, min.cells = 0, min.features = 200)
+  sobj$sample_id <- sample_id
+  
+  #add QC metrics
+  sobj$log1p_total_counts <- log1p(sobj@meta.data$nCount_RNA)
+  sobj$log1p_n_genes_by_counts <- log1p(sobj@meta.data$nFeature_RNA)
+  sobj[["percent.mt"]] <- PercentageFeatureSet(sobj, pattern = "^mt-")
+  
+  #find outliers and subset
+  bool_vector <- !mad_outlier(sobj, 'log1p_total_counts', 5) & !mad_outlier(sobj, 'log1p_n_genes_by_counts', 5) & !mad_outlier(sobj, 'percent.mt', 3)
+  sobj <- subset(sobj, cells = which(bool_vector))
+  
+  return(sobj)
+}
+```
+
+```{r}
+samples <- c('Lung1', 'Lung2', 'Lung3', 'Lung4', 'Lung6')
+```
+
+
+```{r}
+data_list <- sapply(samples, pp)
+```
+
+
+```{r}
+get_soup_groups <- function(sobj){
+  sobj <- NormalizeData(sobj, verbose = FALSE)
+  sobj <- FindVariableFeatures(object = sobj, nfeatures = 2000, verbose = FALSE, selection.method = 'vst')
+  sobj <- ScaleData(sobj, verbose = FALSE)
+  sobj <- RunPCA(sobj, npcs = 20, verbose = FALSE)
+  sobj <- FindNeighbors(sobj, dims = 1:20, verbose = FALSE)
+  sobj <- FindClusters(sobj, resolution = 0.5, verbose = FALSE)
+  
+  return(sobj@meta.data[['seurat_clusters']])
+  
+}
+```
+
+```{r}
+add_soup_groups <- function(sobj){
+  sobj$soup_group <- get_soup_groups(sobj)
+  return(sobj)
+}
+data_list <- sapply(data_list, add_soup_groups)
+```
+
+```{r}
+data_list[1]$Lung1[[]]
+```
+
+```{r}
+make_soup <- function(sobj){
+  sample_id <- as.character(sobj$sample_id[1]) #e.g, Lung1
+  path <- paste0(sample_id, "/outs/raw_feature_bc_matrix/")
+  raw <- Read10X(data.dir = path)
+  
+  sc = SoupChannel(raw,sobj@assays$RNA@counts)
+  sc = setClusters(sc,sobj$soup_group)
+  sc = autoEstCont(sc, doPlot=FALSE)
+  out = adjustCounts(sc, roundToInt = TRUE)
+  
+  #optional keep original
+  sobj[["original.counts"]] <- CreateAssayObject(counts = sobj@assays$RNA@counts)
+  
+  sobj@assays$RNA@counts <- out
+  
+  return(sobj)
+  
+}
+```
+
+```{r}
+data_list <- sapply(data_list, make_soup)
+```
+
+```{r}
+sum(data_list[1]$Lung1@assays$original.counts@counts)
+```
+
+```{r}
+sum(data_list[1]$Lung1@assays$RNA@counts)/sum(data_list[1]$Lung1@assays$original.counts@counts)
+```
+
+```{r}
+
+```
