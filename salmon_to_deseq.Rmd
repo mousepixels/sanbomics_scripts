@@ -1,0 +1,182 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+######## PREPARE INDEX #######
+##ref: https://combine-lab.github.io/alevin-tutorial/2019/selective-alignment/
+
+curl -O https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_44/gencode.v44.transcripts.fa.gz
+curl -O https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_44/GRCh38.primary_assembly.genome.fa.gz
+
+grep "^>" <(gunzip -c GRCh38.primary_assembly.genome.fa.gz) | cut -d " " -f 1 > decoys.txt
+sed -i -e 's/>//g' decoys.txt
+
+cat gencode.v44.transcripts.fa.gz GRCh38.primary_assembly.genome.fa.gz > CRCH38_and_decoys.fa.gz
+
+salmon index -t GRCH38_and_decoys.fa.gz -d decoys.txt -p 30 -i GRCh38_salmon_index --gencode
+
+
+######## RUN SALMON ON ONE SAMPLE #######
+
+#paired
+salmon quant -i GRCh38_salmon_index/ -l A -1 path_to_R1.fastq.gz -2 path_to_R2.fastq.gz --validateMappings -o salmon_out/out_directory
+
+#unstranded
+salmon quant -i GRCh38_salmon_index/ -l A -r path_to.fastq.gz --validateMappings -o salmon_out/out_directory
+
+
+
+######### START MULTIPLE FILE SALMON SCRIPT ######
+
+#!/bin/bash
+
+# Set the path to the Salmon index
+salmon_index="human_salmon_index"
+
+# Set the path to the "fastq" folder
+fastq_dir="fastq"
+
+# Loop through all the directories within the "fastq" folder
+for dir in "${fastq_dir}"/SRR*; do
+    # Find the R1 and R2 FASTQ files
+    r1_file=$(find "$dir" -name "*_1.fastq.gz")
+    r2_file=$(find "$dir" -name "*_2.fastq.gz")
+
+    # Extract the sample name
+    samp=$(basename "$dir")
+
+    echo "Processing sample ${samp}"
+    salmon quant -i "$salmon_index" -l A \
+        -1 "$r1_file" \
+        -2 "$r2_file" \
+        -p 28 --validateMappings -o "salmon_out/${samp}_quant"
+done
+
+######### END MULTIPLE FILE SALMON SCRIPT ######
+
+
+#### R CODE BELOW #######
+
+```{r}
+library(tximport)
+library(ensembldb)
+library(AnnotationHub)
+library(DESeq2)
+```
+
+```{r}
+hub = AnnotationHub()
+```
+
+```{r}
+#make sure to use the right species
+ensdb_query <- query(hub, c("EnsDb", "sapiens", "109"))
+ensdb_query
+```
+
+```{r}
+ensdb_109 <- ensdb_query[['AH109606']]
+```
+
+```{r}
+# Extract transcript and gene information
+tx_data <- transcripts(ensdb_109, return.type = "DataFrame")
+
+# Create the tx2gene data.frame
+tx2gene <- tx_data[, c("tx_id", "gene_id")]
+
+tx2gene
+```
+
+
+
+
+```{r}
+quants_dir <- "salmon_out/"
+
+quant_files <- list.files(quants_dir, pattern = "quant.sf$", recursive = TRUE, full.names = TRUE)
+
+quant_dirs <- list.files(quants_dir, pattern = "_quant$", full.names = TRUE)
+sample_names <- gsub("_quant$", "", basename(quant_dirs))
+
+names(quant_files) <- sample_names
+
+quant_files
+```
+
+
+```{r}
+txi <- tximport(quant_files, type = "salmon", tx2gene = tx2gene,ignoreTxVersion = TRUE)
+```
+
+
+```{r}
+sample_names
+```
+
+
+
+```{r}
+condition <- factor(c("KO","KO","KO","KO", "WT","WT","WT","WT"))
+coldata <- data.frame(row.names = sample_names, condition)
+coldata
+```
+
+
+```{r}
+dds <- DESeqDataSetFromTximport(txi, coldata, ~condition)
+dds
+```
+
+```{r}
+dds <- DESeq(dds)
+```
+
+```{r}
+vsdata <- vst(dds, blind = FALSE)
+plotPCA(vsdata, intgroup = "condition")
+```
+
+
+```{r}
+res <- results(dds, contrast = c('condition', 'KO', 'WT'))
+```
+
+
+```{r}
+res
+```
+
+
+
+```{r}
+sigs <- na.omit(res)
+sigs <- sigs[sigs$padj < 0.05 & sigs$baseMean > 10, ]
+
+sigs
+```
+
+
+
+```{r}
+write.csv(counts(dds), "counts.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
