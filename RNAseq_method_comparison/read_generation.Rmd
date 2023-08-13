@@ -1,0 +1,67 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+library(polyester)
+library(Biostrings)
+library(readr)
+```
+
+
+
+```{r}
+#removing small txs
+fasta = readDNAStringSet('gencode.v44.transcripts.fa.gz')
+fasta <- fasta[width(fasta) >= 100]
+writeXStringSet(fasta, 'filtered_fasta.fa.gz', compress = TRUE)
+```
+
+
+```{r}
+fasta = readDNAStringSet('filtered_fasta.fa.gz')
+```
+
+
+simulating gtex samples, I stopped at 240 instead of 500 because I enjoy life
+```{r}
+df <- read_csv("gtex_500.csv")
+df$transcript_id <- NULL
+df <- as.matrix(df)
+
+
+simulate_experiment_countmat('filtered_fasta.fa.gz', readmat = df, outdir = 'test_reads',
+                             paired = TRUE, error_model = 'uniform', 
+                             error_rate = 0.004, readlen = 101, gzip=TRUE)
+```
+
+
+
+simulating increasing depths counts
+```{r}
+df <- read_csv('increasing_depth.csv')
+df <- as.matrix(df)
+
+
+
+simulate_experiment_countmat('filtered_fasta.fa.gz', readmat = df , outdir = 'increasing_depth',
+                             paired = TRUE, error_model = 'uniform', 
+                             error_rate = 0.004, readlen = 101, gzip=TRUE)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

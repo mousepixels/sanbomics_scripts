@@ -1,0 +1,84 @@
+1) Transcript quant methods:
+	Salmon
+	kallisto
+	STAR + RSEM
+	STAR + StringTie
+
+2) Gene count methods:
+	Salmon
+	kallisto
+	STAR + RSEM
+	STAR + StringTie
+	STAR + HTSeq-count
+	STAR + featureCounts
+
+
+3) References
+	gencode.v44.transcripts.fa.gz
+	GRCh38.primary_assembly.genome.fa.gz
+	gencode.v44.primary_assembly.annotation.gtf.gz
+	GTEx_Analysis_2017-06-05_v8_RSEMv1.3.0_transcript_expected_count.gct.gz
+
+4) Datasets
+	240 random gTEX samples simulated 
+
+	Increasing coverage of 5 closest GTEX samples to the total counts q75 value. simulated
+		1,5,10,15,20,25,30,40,50,60,70,80,90,100 % read depth, n = 5
+
+	Samples simulated with polyester, paired, 101 bp, unstranded
+	('filtered_fasta.fa.gz' is gencode.v44.transcripts.fa.gz with no transcript < 100 bp)
+	simulate_experiment_countmat('filtered_fasta.fa.gz', readmat = <counts mtx> , outdir = <>,
+                             paired = TRUE, error_model = 'uniform', 
+                             error_rate = 0.004, readlen = 101, gzip=TRUE)
+
+
+
+
+#####STAR
+STAR --runMode genomeGenerate --genomeDir STAR_index --genomeFastaFiles GRCh38.primary_assembly.genome.fa --sjdbGTFfile gencode.v44.primary_assembly.annotation.gtf --runThreadN 22
+
+STAR --runMode alignReads --genomeDir STAR_index --outSAMtype BAM SortedByCoordinate --readFilesIn "$file_r1" "$file_r2"  --readFilesCommand gunzip -c --runThreadN 12 --outFileNamePrefix "gtex_STAR_out/${samp}"
+
+
+
+#####RSEM
+rsem-prepare-reference --gtf gencode.v44.primary_assembly.annotation.gtf --star -p 12 GRCh38.primary_assembly.genome.fa rsem_ref/rsem_ref
+
+rsem-calculate-expression --star --no-bam-output --paired-end --star-gzipped-read-file --no-qualities -p 18 "$file_r1" "$file_r2" rsem_ref/rsem_ref "gtex_rsem/${samp}"
+
+
+
+#####stringtie v2.2.1
+stringtie -G gencode.v44.primary_assembly.annotation.gtf -p 8 -e -o gtex_stringtie/${samp}.gtf -A gtex_stringtie/${samp}.genes "$file_bam"
+prepDE.py -l 101 -t wut_if_god_was.csv -i sample_sheet.txt
+
+not easy to use because of requiring star -> stringtie -> prepDE. output is in a weird gtf format. prepDE is not intuitive
+
+
+
+#####salmon v1.10.2
+salmon index -t trans_and_deocys.fa.gz -d decoys.txt -p 30 -i human_salmon_index --gencode
+
+salmon quant -i "$salmon_index" -l A -1 "$file_r1" -2 "$file_r2" \-p 18 --validateMappings -o "random_salmon_out/${samp}"
+
+
+
+#####kallisto v0.50.0
+kallisto index -i kallisto_index gencode.v44.transcripts.fa.gz
+
+kallisto quant  -i "$salmon_index" -o "gtex_kallisto_out/${samp}" -t 22 "$file_r1" "$file_r2"
+
+
+
+#####htseq 2.0.3
+for file in *bam; do samtools index $file; done
+
+htseq-count -f bam -r pos --stranded no --max-reads-in-buffer 90000000 gtex_STAR_out/*bam gencode.v44.primary_assembly.annotation.gtf
+
+
+find gtex_STAR_out -name '*Aligned.sortedByCoord.out.bam' | parallel -j 12 'base=$(basename {} "Aligned.sortedByCoord.out.bam"); htseq-count -f bam -r pos --stranded no --max-reads-in-buffer 90000000 {} gencode.v44.primary_assembly.annotation.gtf > "htseq_gtex_counts/sample_${base}.txt"'
+
+
+
+#####featurecount (subread v2.0,6)
+featureCounts -p --countReadPairs -a gencode.v44.primary_assembly.annotation.gtf -T 6 -o gtex_feature_counts.txt gtex_STAR_out/*bam
