@@ -1,0 +1,30 @@
+##### setup #####
+conda create -n af -y -c bioconda -c conda-forge simpleaf piscem
+export ALEVIN_FRY_HOME="$PWD"
+simpleaf set-paths
+ulimit -n 4096
+
+
+##### index #####
+gunzip -c fastq/pbmc_1k_v3_S1_L002_R2_001.fastq.gz | head | sed -n '2p' | wc -c
+# ***make sure to subtract 1
+simpleaf index --output simpleaf_index --fasta genome.fa --gtf genes.gtf --rlen 91 --threads 28 --use-piscem
+
+
+##### quant #####
+
+simpleaf quant --reads1 a_r1.fastq.gz,b_r1.fastq.gz --reads2 a_r2.fastq.gz,b_R2_001.fastq.gz --threads 28 --index simpleaf_index/index --chemistry 10xv3 --resolution cr-like --unfiltered-pl --expected-ori fw --t2g-map simpleaf_index/index/t2g_3col.tsv --output simpleaf_output
+
+
+
+%pip install pyroe
+
+import scanpy as sc
+from pyroe import load_fry
+
+
+# all counts summed in .X
+adata = load_fry("output_dir/af_quant", output_format = {'X' : ['U','S','A']})
+
+# unspliced in unspliced layer
+adata = load_fry("output_dir/af_quant", output_format = {'X' : ['S', 'A'],'unspliced' : ['U']})
